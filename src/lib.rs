@@ -2,7 +2,7 @@ use std::{thread, sync::{mpsc, Mutex, Arc}};
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Job>
+    sender: Option<mpsc::Sender<Job>>,
 }
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
@@ -25,7 +25,7 @@ impl ThreadPool {
         for id in 0..size {
             workers.push(Worker::new(id, Arc::clone(&receiver)));
         }
-        return ThreadPool { workers, sender };
+        return ThreadPool { workers, sender:Some(sender) };
     }
 
     pub fn execute<F>(&self, f: F)
@@ -33,26 +33,46 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(f);
-        self.sender.send(job).unwrap();
+        self.sender.as_ref().expect("Sender not valid").send(job).unwrap();
     }
-
 }
 
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        drop(self.sender.take());
+
+        for worker in &mut self.workers {
+            if let Some(thread) = worker.thread.take(){
+                thread.join().unwrap();
+                println!("Shutting down worker {} COMPLETED", worker.id);
+            }
+        }
+        println!("Shutting down server COMPLETED.");
+    }
+}
 struct Worker {
     id: usize,
-    thread: thread::JoinHandle<()>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Worker {
     fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
         let thread = thread::spawn(move || loop{
-           let job = receiver.lock().unwrap().recv().unwrap();
-            println!("Worker {id} got a job, executing...");
-            job();    
+           let message = receiver.lock().unwrap().recv();
+           match message{
+            Ok(job)=>{
+               println!("Worker {id} got a job, executing...");
+               job();  
+            }
+            Err(error) => {
+                eprintln!("Worker {id} got an error...\r\nERROR: {error}");
+                break;
+            }  
+           }
         });
         Worker {
             id,
-            thread,
+            thread:Some(thread),
         }
     }
 }
