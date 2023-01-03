@@ -14,12 +14,15 @@ fn main() {
 
     for stream in listener.incoming() {
         let stream = stream.unwrap();
-        read_request(&stream);
+        // read_request(&stream);
+        pool.execute(||{
+            read_request(stream);
+        })
     }
 }
 
-fn read_request(mut stream: &TcpStream) {
-    let buf_reader = BufReader::new(stream);
+fn read_request(mut stream: TcpStream) {
+    let buf_reader = BufReader::new(&stream);
     let _http_request: Vec<_> = buf_reader
         .lines()
         .map(|line| line.unwrap())
